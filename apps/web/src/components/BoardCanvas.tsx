@@ -49,7 +49,7 @@ function useYElements(doc: Y.Doc) {
       for (const [id, value] of map.entries()) {
         activeIds.add(id)
         const cached = cacheRef.current.get(id)
-        let migrated = cached?.source === value ? cached.element : migrateElement(value, index)
+        let migrated = cached && cached.source === value ? cached.element : migrateElement(value, index)
         index++
         if (!migrated) continue
         if (!cached || cached.source !== value) cacheRef.current.set(id, { source: value, element: migrated })
@@ -72,9 +72,11 @@ function useYElements(doc: Y.Doc) {
 function usePresence(provider: HocuspocusProvider) {
   const [states, setStates] = useState<Map<number, Presence>>(new Map())
   useEffect(() => {
-    const update = () => setStates(new Map(provider.awareness.getStates() as Map<number, Presence>))
-    provider.awareness.on('change', update); update()
-    return () => provider.awareness.off('change', update)
+    const awareness = provider.awareness
+    if (!awareness) { setStates(new Map()); return }
+    const update = () => setStates(new Map(awareness.getStates() as Map<number, Presence>))
+    awareness.on('change', update); update()
+    return () => { awareness.off('change', update) }
   }, [provider])
   return states
 }
@@ -153,7 +155,7 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
     const nodes = selectedIds.map(id => nodeRefs.current[id]).filter(Boolean) as Konva.Node[]
     transformerRef.current?.nodes(nodes)
     transformerRef.current?.getLayer()?.batchDraw()
-    provider.awareness.setLocalStateField('selectedIds', selectedIds.slice(0, 100))
+    provider.awareness?.setLocalStateField('selectedIds', selectedIds.slice(0, 100))
   }, [provider, selectedIds, elements])
 
   useEffect(() => {
@@ -225,14 +227,14 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
   }
 
   function scheduleCursor(point: Point | null) {
-    if (!point) { provider.awareness.setLocalStateField('cursor', null); return }
+    if (!point) { provider.awareness?.setLocalStateField('cursor', null); return }
     const now = performance.now()
     const minimumDelay = 1000 / performanceProfile.remoteCursorHz
     const throttle = cursorThrottleRef.current
     throttle.pending = point
     if (now - throttle.lastSent < minimumDelay) return
     throttle.lastSent = now
-    provider.awareness.setLocalStateField('cursor', point)
+    provider.awareness?.setLocalStateField('cursor', point)
   }
 
   function beginDraft(type: 'draw' | 'highlighter' | 'arrow', point: Point) {
@@ -607,7 +609,7 @@ const BoardElementNode = memo(function BoardElementNode({ element, boardId, canE
   if (!actions) return null
   if (element.type === 'sticky' || element.type === 'text') return <Rect {...common} width={element.width} height={element.height} fill={element.backgroundEnabled ? element.fill ?? '#ffffff' : 'rgba(255,255,255,0.001)'} stroke={element.type === 'sticky' ? element.stroke : undefined} strokeWidth={element.type === 'sticky' ? 1.5 : 0} cornerRadius={element.type === 'sticky' ? 8 : 0} shadowColor="#1f2937" shadowOpacity={element.type === 'sticky' && shadows ? 0.12 : 0} shadowBlur={shadows ? 12 : 0} shadowOffsetY={shadows ? 5 : 0} />
   if (element.type === 'rect') return <Rect {...common} width={element.width} height={element.height} fill={element.fill} stroke={element.stroke} strokeWidth={element.strokeWidth} cornerRadius={14} />
-  if (element.type === 'ellipse') return <Ellipse {...common} width={element.width} height={element.height} fill={element.fill} stroke={element.stroke} strokeWidth={element.strokeWidth} />
+  if (element.type === 'ellipse') return <Ellipse {...common} radiusX={element.width / 2} radiusY={element.height / 2} offsetX={-element.width / 2} offsetY={-element.height / 2} fill={element.fill} stroke={element.stroke} strokeWidth={element.strokeWidth} />
   if (element.type === 'arrow') return <Arrow {...common} points={element.points ?? []} stroke={element.stroke} fill={element.stroke} strokeWidth={element.strokeWidth} pointerLength={12} pointerWidth={12} lineCap="round" lineJoin="round" hitStrokeWidth={18} />
   if (element.type === 'draw' || element.type === 'highlighter') return <Line {...common} points={element.points ?? []} stroke={element.stroke} strokeWidth={element.strokeWidth} tension={element.type === 'draw' ? 0.35 : 0} lineCap={element.type === 'draw' ? 'round' : 'square'} lineJoin={element.type === 'draw' ? 'round' : 'bevel'} globalCompositeOperation={element.type === 'highlighter' ? 'multiply' : 'source-over'} hitStrokeWidth={Math.max(18, element.strokeWidth ?? 3)} />
   if ((element.type === 'image' || element.type === 'pdf-page') && element.assetId) return <AssetImage {...common} boardId={boardId} assetId={element.assetId} width={element.width} height={element.height} />

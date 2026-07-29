@@ -18,23 +18,32 @@ function discordPreprocess(source: string): string {
   }).join('')
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+}
+
 const markdown = new MarkdownIt({
   html: false,
   linkify: true,
   breaks: true,
   typographer: false,
-  highlight(code, language) {
+  highlight(code: string, language: string): string {
     if (language && hljs.getLanguage(language)) {
       return hljs.highlight(code, { language, ignoreIllegals: true }).value
     }
-    return markdown.utils.escapeHtml(code)
+    return escapeHtml(code)
   },
 })
-markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
+const linkOpenRule: NonNullable<typeof markdown.renderer.rules.link_open> = (tokens, index, options, _env, self) => {
   tokens[index].attrSet('target', '_blank')
   tokens[index].attrSet('rel', 'noopener noreferrer nofollow')
   return self.renderToken(tokens, index, options)
 }
+markdown.renderer.rules.link_open = linkOpenRule
 
 function renderSafe(source: string): string {
   const rendered = markdown.render(discordPreprocess(source))

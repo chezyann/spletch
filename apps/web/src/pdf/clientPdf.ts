@@ -41,7 +41,9 @@ function canvasToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob>
 }
 
 async function stableSourceDocumentId(data: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', data)
+  const digestInput = new Uint8Array(data.byteLength)
+  digestInput.set(data)
+  const digest = await crypto.subtle.digest('SHA-256', digestInput)
   const hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
   return `pdf_${hex.slice(0, 40)}`
 }
@@ -52,16 +54,15 @@ export async function inspectPdf(file: File, signal?: AbortSignal): Promise<{ pa
   throwIfAborted(signal)
   const data = new Uint8Array(await file.arrayBuffer())
   throwIfAborted(signal)
-  const task = getDocument({ data, isEvalSupported: false, useWorkerFetch: false })
+  const task = getDocument({ data, useWorkerFetch: false })
   const abort = () => task.destroy()
   signal?.addEventListener('abort', abort, { once: true })
   try {
     const document = await task.promise
-    const result = { pageCount: document.numPages }
-    await document.destroy()
-    return result
+    return { pageCount: document.numPages }
   } finally {
     signal?.removeEventListener('abort', abort)
+    await task.destroy().catch(() => undefined)
   }
 }
 
@@ -79,7 +80,7 @@ export async function convertPdfPages(
   throwIfAborted(signal)
   const sourceDocumentId = await stableSourceDocumentId(data)
   throwIfAborted(signal)
-  const loadingTask = getDocument({ data, isEvalSupported: false, useWorkerFetch: false })
+  const loadingTask = getDocument({ data, useWorkerFetch: false })
   let document: PDFDocumentProxy | null = null
   const abort = () => { void loadingTask.destroy() }
   signal?.addEventListener('abort', abort, { once: true })
@@ -124,6 +125,6 @@ export async function convertPdfPages(
     return { importedPages: pagesToImport, pageCount }
   } finally {
     signal?.removeEventListener('abort', abort)
-    await document?.destroy().catch(() => undefined)
+    await loadingTask.destroy().catch(() => undefined)
   }
 }

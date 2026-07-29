@@ -59,7 +59,7 @@ export function MarkdownPanel({ provider, role, status, identity, onClose }: {
     }
     provider.on('synced', initialize)
     initialize()
-    return () => provider.off('synced', initialize)
+    return () => { provider.off('synced', initialize) }
   }, [canEdit, editor, provider])
 
   return (

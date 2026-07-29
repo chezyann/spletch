@@ -93,17 +93,19 @@ function BoardWorkspace({ access }: { access: BoardAccess }) {
   }, [doc])
 
   useEffect(() => {
+    const awareness = provider.awareness
+    if (!awareness) return
     const updateParticipants = () => {
-      const states = provider.awareness.getStates() as Map<number, PresenceState>
+      const states = awareness.getStates() as Map<number, PresenceState>
       const unique = new Map<string, ChatIdentity>()
       for (const state of states.values()) if (state.user) unique.set(state.user.id, state.user)
       setParticipants([...unique.values()])
       const mine = states.get(doc.clientID)?.user
       if (mine) setSelfIdentity(mine)
     }
-    provider.awareness.on('change', updateParticipants)
+    awareness.on('change', updateParticipants)
     updateParticipants()
-    return () => provider.awareness.off('change', updateParticipants)
+    return () => { awareness.off('change', updateParticipants) }
   }, [doc.clientID, provider])
 
   useEffect(() => {
