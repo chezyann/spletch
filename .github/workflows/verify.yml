@@ -1,0 +1,43 @@
+name: Verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v7
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.14.0'
+          package-manager-cache: false
+
+      - name: Créer temporairement le lockfile s’il manque
+        shell: bash
+        run: |
+          if [ ! -f package-lock.json ]; then
+            echo "package-lock.json absent : génération temporaire pour la vérification."
+            npm install \
+              --package-lock-only \
+              --ignore-scripts \
+              --no-audit \
+              --no-fund
+          fi
+
+      - name: Installer les dépendances
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Vérifier le projet
+        run: npm run check
