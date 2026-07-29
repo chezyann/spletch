@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from 'express'
 import { CSRF_COOKIE, SESSION_COOKIE, ensureCsrfCookie, parseCookies, validCsrfToken } from '../security/cookies.js'
 import { sessionFromToken, type PublicUser } from '../db.js'
 
-export type AuthenticatedRequest = Request & {
+export type AuthenticatedRequest = Request<Record<string, string>> & {
   user?: PublicUser
   sessionId?: string
   sessionToken?: string

@@ -38,6 +38,17 @@ type UploadMetadata = {
   dpi?: number
 }
 
+type ValidatedUploadMetadata =
+  | { kind: 'image' }
+  | {
+      kind: 'pdf-page'
+      sourceDocumentId: string
+      sourceName: string
+      pageNumber: number
+      pageCount: number
+      dpi: number
+    }
+
 const ASSET_COLUMNS = `
   id,
   board_id AS boardId,
@@ -73,7 +84,7 @@ function finiteInteger(value: number | undefined, min: number, max: number): num
   if (!Number.isFinite(value)) return null
   return Math.max(min, Math.min(max, Math.round(value!)))
 }
-function validateUploadMetadata(metadata: UploadMetadata): Required<Pick<UploadMetadata, 'kind'>> & Omit<UploadMetadata, 'kind'> {
+function validateUploadMetadata(metadata: UploadMetadata): ValidatedUploadMetadata {
   const kind = metadata.kind ?? 'image'
   if (kind === 'image') return { kind }
   const sourceDocumentId = metadata.sourceDocumentId?.trim()

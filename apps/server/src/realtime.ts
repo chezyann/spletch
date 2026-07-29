@@ -130,7 +130,7 @@ export const realtimeServer = new Server<RealtimeContext>({
     assertAllowedOrigin(typeof request.headers.origin === 'string' ? request.headers.origin : null)
   },
 
-  async onAuthenticate({ documentName, token, connection, requestHeaders }) {
+  async onAuthenticate({ documentName, token, connectionConfig, requestHeaders }) {
     assertAllowedOrigin(requestHeaders.get('origin'))
     const context = contextFromToken(documentName, token)
     const sourceConnections = connectionsBySource.get(context.rateKey) ?? 0
@@ -141,7 +141,7 @@ export const realtimeServer = new Server<RealtimeContext>({
     connectionsBySource.set(context.rateKey, sourceConnections + 1)
     connectionsByBoard.set(context.boardId, boardConnections + 1)
     totalConnections++
-    connection.readOnly = context.role === 'viewer'
+    connectionConfig.readOnly = context.role === 'viewer'
     return context
   },
 
