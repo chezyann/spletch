@@ -1,0 +1,10 @@
+{
+  "product": "Spletch!",
+  "version": "0.5.1",
+  "minimumPreviousVersion": "0.5.0",
+  "databaseSchema": 1,
+  "canvasSchema": 3,
+  "automaticRollbackSupported": true,
+  "databaseRestoreRequiredForRollback": false,
+  "notes": "Virtualisation, index spatial, tracés simplifiés et images progressives. Aucun LOD selon le zoom."
+}

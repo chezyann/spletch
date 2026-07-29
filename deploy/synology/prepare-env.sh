@@ -1,0 +1,58 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+TARGET=${1:-$SCRIPT_DIR/.env.portainer}
+
+printf "URL publique (ex. https://board.example.fr ou http://192.168.1.20:4080): "
+read -r ORIGIN
+case "$ORIGIN" in
+  https://*) SECURE=true ;;
+  http://*) SECURE=false ;;
+  *) echo "L'URL doit commencer par http:// ou https://" >&2; exit 1 ;;
+esac
+
+printf "Dépôt de l'image [ghcr.io/VOTRE_COMPTE/spletch]: "
+read -r REPOSITORY
+REPOSITORY=${REPOSITORY:-ghcr.io/VOTRE_COMPTE/spletch}
+printf "Version [0.5.1]: "
+read -r VERSION
+VERSION=${VERSION:-0.5.1}
+printf "Volume Synology [volume1]: "
+read -r VOLUME
+VOLUME=${VOLUME:-volume1}
+printf "Port local [4080]: "
+read -r PORT
+PORT=${PORT:-4080}
+
+cat > "$TARGET" <<ENV
+SPLETCH_IMAGE_REPOSITORY=$REPOSITORY
+SPLETCH_VERSION=$VERSION
+SPLETCH_PULL_POLICY=always
+WEB_ORIGINS=$ORIGIN
+COOKIE_SECURE=$SECURE
+DATA_PATH=/$VOLUME/docker/spletch/data
+BACKUP_PATH=/$VOLUME/docker/spletch/backups
+CADDYFILE_PATH=/$VOLUME/docker/spletch/app/deploy/synology/Caddyfile
+HOST_PORT=$PORT
+BIND_ADDRESS=0.0.0.0
+APP_MEMORY_LIMIT=4g
+AUTO_BACKUP_ON_START=true
+REQUIRE_STARTUP_BACKUP=true
+STARTUP_BACKUP_INCLUDE_ASSETS=false
+BACKUP_RETENTION_DAYS=14
+SESSION_DAYS=7
+SHARE_GRANT_HOURS=12
+MAX_DOCUMENT_BYTES=8388608
+MAX_ELEMENTS_PER_BOARD=10000
+MAX_IMAGE_BYTES=12582912
+MAX_IMAGE_PIXELS=50000000
+MAX_CLIENT_PDF_PAGES=30
+MAX_CLIENT_PDF_DPI=300
+MAX_ASSET_BYTES_PER_BOARD=1073741824
+MAX_REALTIME_CONNECTIONS_PER_SOURCE=8
+MAX_REALTIME_CONNECTIONS_PER_BOARD=50
+MAX_REALTIME_CONNECTIONS_TOTAL=200
+ENV
+chmod 600 "$TARGET"
+echo "Fichier créé: $TARGET"

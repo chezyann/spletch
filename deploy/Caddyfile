@@ -1,0 +1,12 @@
+{$DOMAIN:localhost} {
+  encode zstd gzip
+  reverse_proxy /api/* app:4000
+  reverse_proxy /ws* app:4001
+  reverse_proxy app:4000
+  header {
+    -Server
+    Referrer-Policy "no-referrer"
+    Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()"
+    X-Content-Type-Options "nosniff"
+  }
+}

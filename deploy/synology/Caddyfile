@@ -1,0 +1,13 @@
+:8080 {
+    encode zstd gzip
+
+    @websocket path /ws /ws/*
+    reverse_proxy @websocket app:4001
+    reverse_proxy app:4000
+
+    header {
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+}

@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+apps/*/dist
+data
+backups
+.env
+*.log
+*.zip
+*.png
+spletch-demo-*.html

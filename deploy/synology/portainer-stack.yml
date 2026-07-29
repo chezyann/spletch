@@ -1,0 +1,107 @@
+services:
+  permissions:
+    image: alpine:3.22
+    container_name: spletch-permissions
+    restart: "no"
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /data /backups && chown -R 1000:1000 /data /backups"]
+    volumes:
+      - ${DATA_PATH}:/data
+      - ${BACKUP_PATH}:/backups
+    security_opt:
+      - no-new-privileges:true
+
+  app:
+    image: ${SPLETCH_IMAGE_REPOSITORY}:${SPLETCH_VERSION}
+    pull_policy: ${SPLETCH_PULL_POLICY:-always}
+    container_name: spletch
+    restart: unless-stopped
+    depends_on:
+      permissions:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      APP_VERSION: ${SPLETCH_VERSION}
+      API_PORT: "4000"
+      WS_PORT: "4001"
+      DATA_DIR: /var/lib/spletch
+      BACKUP_DIR: /var/backups/spletch
+      APP_SECRET_FILE: /var/lib/spletch/app-secret
+      AUTO_BACKUP_ON_START: ${AUTO_BACKUP_ON_START:-true}
+      REQUIRE_STARTUP_BACKUP: ${REQUIRE_STARTUP_BACKUP:-true}
+      STARTUP_BACKUP_INCLUDE_ASSETS: ${STARTUP_BACKUP_INCLUDE_ASSETS:-false}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      WEB_ORIGINS: ${WEB_ORIGINS}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      TRUST_PROXY: "true"
+      SESSION_DAYS: ${SESSION_DAYS:-7}
+      SHARE_GRANT_HOURS: ${SHARE_GRANT_HOURS:-12}
+      REALTIME_TICKET_SECONDS: "90"
+      MAX_DOCUMENT_BYTES: ${MAX_DOCUMENT_BYTES:-8388608}
+      MAX_ELEMENTS_PER_BOARD: ${MAX_ELEMENTS_PER_BOARD:-10000}
+      MAX_IMAGE_BYTES: ${MAX_IMAGE_BYTES:-12582912}
+      MAX_IMAGE_PIXELS: ${MAX_IMAGE_PIXELS:-50000000}
+      MAX_CLIENT_PDF_PAGES: ${MAX_CLIENT_PDF_PAGES:-30}
+      MAX_CLIENT_PDF_DPI: ${MAX_CLIENT_PDF_DPI:-300}
+      MAX_ASSET_BYTES_PER_BOARD: ${MAX_ASSET_BYTES_PER_BOARD:-1073741824}
+      MAX_REALTIME_CONNECTIONS_PER_SOURCE: ${MAX_REALTIME_CONNECTIONS_PER_SOURCE:-8}
+      MAX_REALTIME_CONNECTIONS_PER_BOARD: ${MAX_REALTIME_CONNECTIONS_PER_BOARD:-50}
+      MAX_REALTIME_CONNECTIONS_TOTAL: ${MAX_REALTIME_CONNECTIONS_TOTAL:-200}
+      INSTANCE_NAME: synology-1
+    volumes:
+      - ${DATA_PATH}:/var/lib/spletch
+      - ${BACKUP_PATH}:/var/backups/spletch
+    expose:
+      - "4000"
+      - "4001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: ${APP_MEMORY_LIMIT:-4g}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    networks:
+      - spletch-internal
+
+  proxy:
+    image: caddy:2.10.2-alpine
+    container_name: spletch-proxy
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - ${BIND_ADDRESS:-0.0.0.0}:${HOST_PORT:-4080}:8080
+    volumes:
+      - ${CADDYFILE_PATH}:/etc/caddy/Caddyfile:ro
+    read_only: true
+    tmpfs:
+      - /config:size=16m
+      - /data:size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - spletch-internal
+
+networks:
+  spletch-internal:
+    driver: bridge
