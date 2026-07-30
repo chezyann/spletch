@@ -20,7 +20,7 @@ services:
       permissions:
         condition: service_completed_successfully
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       APP_VERSION: ${SPLETCH_VERSION}
       API_PORT: "4000"
       WS_PORT: "4001"
