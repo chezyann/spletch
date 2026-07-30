@@ -80,7 +80,7 @@ services:
       app:
         condition: service_healthy
     ports:
-      - ${BIND_ADDRESS:-0.0.0.0}:${HOST_PORT:-4080}:8080
+      - "${BIND_ADDRESS:-0.0.0.0}:${HOST_PORT:-4080}:8080"
     volumes:
       - ${CADDYFILE_PATH}:/etc/caddy/Caddyfile:ro
     read_only: true
