@@ -15,10 +15,13 @@ export function ChatPanel({ provider, messages, identity, currentUsername, menti
 }) {
   const [draft, setDraft] = useState('')
   const [showEmoji, setShowEmoji] = useState(false)
+  const [openReactionMenuId, setOpenReactionMenuId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const reactionCloseTimerRef = useRef<number | null>(null)
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }) }, [messages])
+  useEffect(() => () => { if (reactionCloseTimerRef.current !== null) window.clearTimeout(reactionCloseTimerRef.current) }, [])
   const mentionQuery = useMemo(() => draft.match(/(?:^|\s)@([\p{L}\p{N}_-]*)$/u)?.[1].toLocaleLowerCase('fr-FR') ?? null, [draft])
   const suggestions = mentionQuery === null ? [] : mentionableUsers.filter(user => user.username.toLocaleLowerCase('fr-FR').includes(mentionQuery)).slice(0, 6)
   function addMention(username: string) { setDraft(value => value.replace(/@([\p{L}\p{N}_-]*)$/u, `@${username} `)); requestAnimationFrame(() => textareaRef.current?.focus()) }
@@ -30,6 +33,27 @@ export function ChatPanel({ provider, messages, identity, currentUsername, menti
     setDraft(''); setShowEmoji(false); setError('')
   }
   function react(messageId: string, emoji: string) { provider.sendStateless(JSON.stringify({ type: 'chat:reaction', messageId, emoji })) }
+  function cancelReactionMenuClose() {
+    if (reactionCloseTimerRef.current === null) return
+    window.clearTimeout(reactionCloseTimerRef.current)
+    reactionCloseTimerRef.current = null
+  }
+  function openReactionMenu(messageId: string) {
+    cancelReactionMenuClose()
+    setOpenReactionMenuId(messageId)
+  }
+  function closeReactionMenuSoon() {
+    cancelReactionMenuClose()
+    reactionCloseTimerRef.current = window.setTimeout(() => {
+      setOpenReactionMenuId(null)
+      reactionCloseTimerRef.current = null
+    }, 2000)
+  }
+  function chooseReaction(messageId: string, emoji: string) {
+    cancelReactionMenuClose()
+    setOpenReactionMenuId(null)
+    react(messageId, emoji)
+  }
 
   return <aside className="side-panel chat-panel" aria-label="Discussion du projet">
     <PanelResizeHandle />
@@ -44,7 +68,16 @@ export function ChatPanel({ provider, messages, identity, currentUsername, menti
           <MarkdownContent source={message.markdown} />
           <div className="message-reactions">
             {message.reactions.map(reaction => <button key={reaction.emoji} className={reaction.participantIds.includes(identity.id) ? 'active' : ''} onClick={() => react(message.id, reaction.emoji)} title={reaction.participantNames.join(', ')}>{reaction.emoji} <span>{reaction.participantIds.length}</span></button>)}
-            <div className="reaction-add"><button title="Ajouter une réaction" aria-label="Ajouter une réaction">＋</button><div className="reaction-menu">{quickEmojis.map(emoji => <button key={emoji} onClick={() => react(message.id, emoji)}>{emoji}</button>)}</div></div>
+            <div
+              className="reaction-add"
+              onMouseEnter={() => openReactionMenu(message.id)}
+              onMouseLeave={closeReactionMenuSoon}
+              onFocus={() => openReactionMenu(message.id)}
+              onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeReactionMenuSoon() }}
+            >
+              <button title="Ajouter une réaction" aria-label="Ajouter une réaction" aria-expanded={openReactionMenuId === message.id}>＋</button>
+              {openReactionMenuId === message.id && <div className="reaction-menu" onMouseEnter={cancelReactionMenuClose}>{quickEmojis.map(emoji => <button key={emoji} onClick={() => chooseReaction(message.id, emoji)}>{emoji}</button>)}</div>}
+            </div>
           </div>
         </article>
       })}

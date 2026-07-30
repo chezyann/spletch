@@ -171,9 +171,13 @@ export const realtimeServer = new Server<RealtimeContext>({
 
   async beforeHandleAwareness({ states, context }) {
     for (const state of states.values()) {
-      state.user = context?.identity ?? null
+      state.user = context?.identity ? { ...context.identity, name: context.identity.username } : null
       state.role = context?.role ?? 'viewer'
-      if (state.cursor && (typeof state.cursor.x !== 'number' || typeof state.cursor.y !== 'number')) state.cursor = null
+      if (state.cursor && typeof state.cursor.x === 'number' && typeof state.cursor.y === 'number') {
+        state.canvasCursor = { x: state.cursor.x, y: state.cursor.y }
+        state.cursor = null
+      }
+      if (state.canvasCursor && (typeof state.canvasCursor.x !== 'number' || typeof state.canvasCursor.y !== 'number')) state.canvasCursor = null
       if (Array.isArray(state.selectedIds)) state.selectedIds = state.selectedIds.filter((value: unknown) => typeof value === 'string').slice(0, 100)
     }
   },

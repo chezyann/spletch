@@ -21,7 +21,7 @@ import { useAdaptivePerformance } from '../performance/adaptivePerformance'
 import { loadCachedImage } from '../performance/imageCache'
 
 type Tool = 'select' | 'hand' | 'sticky' | 'rect' | 'ellipse' | 'text' | 'draw' | 'highlighter' | 'arrow'
-type Presence = { user?: { id: string; username: string; color: string }; cursor?: { x: number; y: number } | null; selectedIds?: string[] }
+type Presence = { user?: { id: string; username: string; color: string }; canvasCursor?: { x: number; y: number } | null; selectedIds?: string[] }
 type Point = { x: number; y: number }
 type SelectionBox = { start: Point; end: Point } | null
 type PdfDialogState = { file: File; resolve: (options: PdfImportOptions | null) => void }
@@ -227,14 +227,14 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
   }
 
   function scheduleCursor(point: Point | null) {
-    if (!point) { provider.awareness?.setLocalStateField('cursor', null); return }
+    if (!point) { provider.awareness?.setLocalStateField('canvasCursor', null); return }
     const now = performance.now()
     const minimumDelay = 1000 / performanceProfile.remoteCursorHz
     const throttle = cursorThrottleRef.current
     throttle.pending = point
     if (now - throttle.lastSent < minimumDelay) return
     throttle.lastSent = now
-    provider.awareness?.setLocalStateField('cursor', point)
+    provider.awareness?.setLocalStateField('canvasCursor', point)
   }
 
   function beginDraft(type: 'draw' | 'highlighter' | 'arrow', point: Point) {
@@ -262,7 +262,9 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
   }
 
   function handleStageDown(event: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
-    if (event.target !== event.target.getStage()) return
+    const stage = event.target.getStage()
+    const isBackground = event.target === stage || event.target.name() === 'canvas-background'
+    if (!isBackground) return
     const point = pointerWorld(); if (!point) return
     if (tool === 'select') { setEditingId(null); setSelectionBox({ start: point, end: point }); return }
     if (tool === 'hand') return
@@ -475,7 +477,7 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
     for (let y = startY; y <= worldBottom + GRID; y += GRID) lines.push({ key: `y${y}`, points: [worldLeft - GRID, y, worldRight + GRID, y] })
     return lines
   }, [worldBottom, worldLeft, worldRight, worldTop])
-  const remotePresences = [...presence.entries()].filter(([clientId, state]) => clientId !== doc.clientID && state.user && state.cursor)
+  const remotePresences = [...presence.entries()].filter(([clientId, state]) => clientId !== doc.clientID && state.user && state.canvasCursor)
   const selectionRect = selectionBox ? { x: Math.min(selectionBox.start.x, selectionBox.end.x), y: Math.min(selectionBox.start.y, selectionBox.end.y), width: Math.abs(selectionBox.end.x - selectionBox.start.x), height: Math.abs(selectionBox.end.y - selectionBox.start.y) } : null
   const editing = editingId ? elements.find(element => element.id === editingId) : null
 
@@ -534,6 +536,18 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
     <div className={`canvas-performance ${performanceProfile.mode}`} title="Objets rendus / objets du tableau">{visibleElements.length}/{elements.length} · {performanceProfile.mode}</div>
     {busy && <div className="canvas-status"><span>{busy}</span>{importCancelable && <button type="button" onClick={cancelActiveImport}>Annuler</button>}</div>}
     <Stage ref={stageRef} width={size.width} height={size.height} x={viewport.x} y={viewport.y} scaleX={viewport.scale} scaleY={viewport.scale} draggable={tool === 'hand'} onDragEnd={event => setViewport(current => ({ ...current, x: event.target.x(), y: event.target.y() }))} onMouseDown={handleStageDown} onTouchStart={handleStageDown} onMouseMove={handleStageMove} onTouchMove={handleTouchMove} onMouseUp={handleStageUp} onTouchEnd={handleStageUp} onMouseLeave={() => scheduleCursor(null)} onWheel={onWheel}>
+      <Layer>
+        <Rect
+          name="canvas-background"
+          x={worldLeft - GRID}
+          y={worldTop - GRID}
+          width={worldRight - worldLeft + GRID * 2}
+          height={worldBottom - worldTop + GRID * 2}
+          fill="rgba(255,255,255,0.001)"
+          listening
+          perfectDrawEnabled={false}
+        />
+      </Layer>
       <Layer listening={false}>{gridLines.map(line => <Line key={line.key} points={line.points} stroke="#cbd5e1" strokeWidth={0.55 / viewport.scale} opacity={0.75} perfectDrawEnabled={false} />)}</Layer>
       <Layer>{staticElements.map(element => <BoardElementNode key={element.id} element={element} boardId={boardId} canEdit={canEdit} tool={tool} perfectDraw={performanceProfile.perfectDraw} shadows={performanceProfile.shadows} actionsRef={elementActionsRef} />)}</Layer>
       <Layer>
@@ -554,7 +568,7 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
         }} />}
       </Layer>
       <Layer listening={false}>
-        {remotePresences.map(([clientId, state]) => <Group key={clientId} x={state.cursor!.x} y={state.cursor!.y} listening={false}><Line points={[0, 0, 0, 20, 5, 15, 10, 26, 14, 24, 9, 13, 17, 13]} closed fill={state.user!.color} stroke="white" strokeWidth={1.5} perfectDrawEnabled={false} /><Rect x={14} y={18} height={24} width={Math.max(58, state.user!.username.length * 8 + 18)} fill={state.user!.color} cornerRadius={7} perfectDrawEnabled={false} /><KonvaText x={23} y={24} text={state.user!.username} fontSize={12} fill="white" perfectDrawEnabled={false} /></Group>)}
+        {remotePresences.map(([clientId, state]) => <Group key={clientId} x={state.canvasCursor!.x} y={state.canvasCursor!.y} listening={false}><Line points={[0, 0, 0, 20, 5, 15, 10, 26, 14, 24, 9, 13, 17, 13]} closed fill={state.user!.color} stroke="white" strokeWidth={1.5} perfectDrawEnabled={false} /><Rect x={14} y={18} height={24} width={Math.max(58, state.user!.username.length * 8 + 18)} fill={state.user!.color} cornerRadius={7} perfectDrawEnabled={false} /><KonvaText x={23} y={24} text={state.user!.username} fontSize={12} fill="white" perfectDrawEnabled={false} /></Group>)}
       </Layer>
     </Stage>
 

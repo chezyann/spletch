@@ -204,8 +204,7 @@ h1, h2, h3 { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkM
 .message-reactions > button, .reaction-add > button { border: 1px solid #dfdbe7; background: white; border-radius: 9px; min-height: 25px; padding: 0 7px; font-size: 12px; cursor: pointer; }
 .message-reactions > button.active { background: var(--primary-soft); border-color: #cbbbf4; }
 .reaction-add { position: relative; }
-.reaction-menu { display: none; position: absolute; z-index: 10; left: 0; bottom: 29px; padding: 5px; background: white; border: 1px solid #ddd9e6; box-shadow: 0 8px 22px rgba(35,26,54,.15); border-radius: 10px; white-space: nowrap; }
-.reaction-add:hover .reaction-menu, .reaction-add:focus-within .reaction-menu { display: flex; }
+.reaction-menu { display: flex; position: absolute; z-index: 10; left: 0; bottom: 29px; padding: 5px; background: white; border: 1px solid #ddd9e6; box-shadow: 0 8px 22px rgba(35,26,54,.15); border-radius: 10px; white-space: nowrap; }
 .reaction-menu button, .emoji-popover button { border: 0; background: transparent; font-size: 19px; padding: 5px; cursor: pointer; border-radius: 7px; }
 .reaction-menu button:hover, .emoji-popover button:hover { background: #f2eff7; }
 .chat-composer { position: relative; margin: 10px 14px 14px; padding: 8px; border: 1px solid #d9d5e2; border-radius: 15px; background: white; box-shadow: 0 8px 22px rgba(39,29,58,.08); }
