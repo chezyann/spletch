@@ -1,4 +1,4 @@
-# Spletch! 0.5.1
+# Spletch! 0.5.1 - EXPERIMENTAL !!!
 
 Spletch! est une application web de tableau blanc collaboratif avec comptes, permissions, chat éphémère, notes de projet structurées, images et import de pages PDF.
 
