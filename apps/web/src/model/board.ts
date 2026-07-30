@@ -1,5 +1,8 @@
+import { createUuid } from '../lib/uuid'
+
 export const BOARD_SCHEMA_VERSION = 3
 export type ElementType = 'sticky' | 'rect' | 'ellipse' | 'text' | 'draw' | 'highlighter' | 'arrow' | 'image' | 'pdf-page'
+
 export type BoardElement = {
   schemaVersion: 3
   id: string
@@ -37,7 +40,7 @@ export function migrateElement(value: unknown, fallbackZ = 0): BoardElement | nu
   const source = value as Record<string, unknown>
   const type = typeof source.type === 'string' ? source.type as ElementType : null
   if (!type || !['sticky', 'rect', 'ellipse', 'text', 'draw', 'highlighter', 'arrow', 'image', 'pdf-page'].includes(type)) return null
-  const id = typeof source.id === 'string' ? source.id : crypto.randomUUID()
+  const id = typeof source.id === 'string' ? source.id : createUuid()
   return {
     schemaVersion: 3,
     id,

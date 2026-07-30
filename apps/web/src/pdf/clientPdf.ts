@@ -40,10 +40,25 @@ function canvasToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob>
   })
 }
 
+function fallbackDocumentFingerprint(data: Uint8Array): string {
+  const seeds = [0x811c9dc5, 0x9e3779b9, 0x85ebca6b, 0xc2b2ae35, 0x27d4eb2f]
+  const hashes = seeds.map(seed => seed >>> 0)
+  for (let index = 0; index < data.length; index++) {
+    const byte = data[index]
+    for (let slot = 0; slot < hashes.length; slot++) {
+      hashes[slot] ^= byte + slot
+      hashes[slot] = Math.imul(hashes[slot], 0x01000193) >>> 0
+    }
+  }
+  return hashes.map(value => value.toString(16).padStart(8, '0')).join('').slice(0, 40)
+}
+
 async function stableSourceDocumentId(data: Uint8Array): Promise<string> {
+  const subtle = globalThis.crypto?.subtle
+  if (!subtle) return `pdf_${fallbackDocumentFingerprint(data)}`
   const digestInput = new Uint8Array(data.byteLength)
   digestInput.set(data)
-  const digest = await crypto.subtle.digest('SHA-256', digestInput)
+  const digest = await subtle.digest('SHA-256', digestInput)
   const hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
   return `pdf_${hex.slice(0, 40)}`
 }

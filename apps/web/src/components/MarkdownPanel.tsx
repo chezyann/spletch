@@ -10,7 +10,6 @@ import Placeholder from '@tiptap/extension-placeholder'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { TableKit } from '@tiptap/extension-table'
 import Collaboration from '@tiptap/extension-collaboration'
-import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import { common, createLowlight } from 'lowlight'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 import type { Role } from '../lib/api'
@@ -22,11 +21,10 @@ import { isAllowedEditorUri, normalizedEditorHref, sanitizeEditorPaste } from '.
 const lowlight = createLowlight(common)
 const defaultContent = `<h1>Synthèse du projet</h1><h2>Objectifs</h2><ul data-type="taskList"><li data-type="taskItem" data-checked="false"><label><input type="checkbox"><span></span></label><div><p>Définir les prochaines étapes</p></div></li></ul><h2>Décisions</h2><blockquote><p>Conservez ici les informations importantes du projet.</p></blockquote>`
 
-export function MarkdownPanel({ provider, role, status, identity, onClose }: {
+export function MarkdownPanel({ provider, role, status, onClose }: {
   provider: HocuspocusProvider
   role: Role
   status: CollaborationStatus
-  identity: { username: string; color: string }
   onClose: () => void
 }) {
   const canEdit = role !== 'viewer'
@@ -44,13 +42,12 @@ export function MarkdownPanel({ provider, role, status, identity, onClose }: {
       Spoiler,
       DiscordInputRules,
       Collaboration.configure({ document: provider.document, field: 'projectNotes' }),
-      CollaborationCaret.configure({ provider, user: { name: identity.username, color: identity.color } }),
     ],
     editorProps: {
       attributes: { class: 'project-notes-editor', spellcheck: 'true', 'aria-label': 'Notes de projet partagées' },
       transformPastedHTML: sanitizeEditorPaste,
     },
-  }, [provider, canEdit, identity.username, identity.color])
+  }, [provider, canEdit])
 
   useEffect(() => {
     if (!editor) return

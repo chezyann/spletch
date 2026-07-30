@@ -19,9 +19,11 @@ import { SpatialIndex, type Bounds } from '../performance/spatialIndex'
 import { normalizeFlatPoints, simplifyFlatPoints } from '../performance/simplify'
 import { useAdaptivePerformance } from '../performance/adaptivePerformance'
 import { loadCachedImage } from '../performance/imageCache'
+import { createUuid } from '../lib/uuid'
 
 type Tool = 'select' | 'hand' | 'sticky' | 'rect' | 'ellipse' | 'text' | 'draw' | 'highlighter' | 'arrow'
-type Presence = { user?: { id: string; username: string; color: string }; canvasCursor?: { x: number; y: number } | null; selectedIds?: string[] }
+type PresenceUser = { id?: string; username?: string; name?: string; color?: string }
+type Presence = { user?: PresenceUser; canvasCursor?: { x: number; y: number } | null; selectedIds?: string[] }
 type Point = { x: number; y: number }
 type SelectionBox = { start: Point; end: Point } | null
 type PdfDialogState = { file: File; resolve: (options: PdfImportOptions | null) => void }
@@ -36,6 +38,18 @@ type ElementActions = {
   cursor: (value: string) => void
 }
 const GRID = 22
+
+function presenceUsername(user: PresenceUser | undefined): string {
+  const value = typeof user?.username === 'string' && user.username.trim()
+    ? user.username
+    : typeof user?.name === 'string' && user.name.trim()
+      ? user.name
+      : 'Participant'
+  return value.slice(0, 30)
+}
+function presenceColor(user: PresenceUser | undefined): string {
+  return typeof user?.color === 'string' && /^#[0-9a-f]{6}$/i.test(user.color) ? user.color : '#6d28d9'
+}
 
 function useYElements(doc: Y.Doc) {
   const map = useMemo(() => doc.getMap<unknown>('elements'), [doc])
@@ -186,7 +200,7 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
   }
   function createElement(type: Tool, point: Point): string | null {
     if (!canEdit || type === 'select' || type === 'hand' || type === 'draw' || type === 'highlighter' || type === 'arrow') return null
-    const id = crypto.randomUUID()
+    const id = createUuid()
     const maxZ = Math.max(0, ...elements.map(element => element.zIndex)) + 1
     const base = { schemaVersion: 3 as const, id, x: snap(point.x, snapEnabled), y: snap(point.y, snapEnabled), rotation: 0, zIndex: maxZ, opacity: 1, width: 180, height: 120 }
     let element: BoardElement
@@ -202,7 +216,7 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
 
   function groupSelection() {
     if (!canEdit || selectedIds.length < 2) return
-    const groupId = crypto.randomUUID()
+    const groupId = createUuid()
     doc.transact(() => selectedIds.forEach(id => { const current = migrateElement(map.get(id)); if (current) map.set(id, { ...current, groupId }) }))
   }
   function ungroupSelection() {
@@ -239,7 +253,7 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
 
   function beginDraft(type: 'draw' | 'highlighter' | 'arrow', point: Point) {
     const settings = type === 'draw' ? pen : type === 'highlighter' ? highlighter : { size: 3, color: '#6d28d9', opacity: 1 }
-    const next: DraftStroke = { id: crypto.randomUUID(), type, x: point.x, y: point.y, points: [0, 0], stroke: settings.color, strokeWidth: settings.size, opacity: settings.opacity }
+    const next: DraftStroke = { id: createUuid(), type, x: point.x, y: point.y, points: [0, 0], stroke: settings.color, strokeWidth: settings.size, opacity: settings.opacity }
     draftRef.current = next
     setDraft(next)
   }
@@ -453,7 +467,7 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
         }
       }
     }
-    const id = crypto.randomUUID()
+    const id = createUuid()
     const ratio = asset.width && asset.height ? asset.width / asset.height : 1.4
     const width = Math.min(520, asset.width ?? 420), height = width / ratio
     map.set(id, {
@@ -568,7 +582,11 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
         }} />}
       </Layer>
       <Layer listening={false}>
-        {remotePresences.map(([clientId, state]) => <Group key={clientId} x={state.canvasCursor!.x} y={state.canvasCursor!.y} listening={false}><Line points={[0, 0, 0, 20, 5, 15, 10, 26, 14, 24, 9, 13, 17, 13]} closed fill={state.user!.color} stroke="white" strokeWidth={1.5} perfectDrawEnabled={false} /><Rect x={14} y={18} height={24} width={Math.max(58, state.user!.username.length * 8 + 18)} fill={state.user!.color} cornerRadius={7} perfectDrawEnabled={false} /><KonvaText x={23} y={24} text={state.user!.username} fontSize={12} fill="white" perfectDrawEnabled={false} /></Group>)}
+        {remotePresences.map(([clientId, state]) => {
+          const username = presenceUsername(state.user)
+          const color = presenceColor(state.user)
+          return <Group key={clientId} x={state.canvasCursor!.x} y={state.canvasCursor!.y} listening={false}><Line points={[0, 0, 0, 20, 5, 15, 10, 26, 14, 24, 9, 13, 17, 13]} closed fill={color} stroke="white" strokeWidth={1.5} perfectDrawEnabled={false} /><Rect x={14} y={18} height={24} width={Math.max(58, username.length * 8 + 18)} fill={color} cornerRadius={7} perfectDrawEnabled={false} /><KonvaText x={23} y={24} text={username} fontSize={12} fill="white" perfectDrawEnabled={false} /></Group>
+        })}
       </Layer>
     </Stage>
 

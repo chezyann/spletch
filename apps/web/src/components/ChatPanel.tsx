@@ -47,7 +47,7 @@ export function ChatPanel({ provider, messages, identity, currentUsername, menti
     reactionCloseTimerRef.current = window.setTimeout(() => {
       setOpenReactionMenuId(null)
       reactionCloseTimerRef.current = null
-    }, 2000)
+    }, 500)
   }
   function chooseReaction(messageId: string, emoji: string) {
     cancelReactionMenuClose()

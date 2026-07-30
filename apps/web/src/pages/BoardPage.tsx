@@ -18,11 +18,23 @@ type BoardAccess = {
   shareTokenConsumed?: boolean
 }
 type ActivePanel = 'chat' | 'markdown' | null
-type PresenceState = { user?: ChatIdentity; role?: Role }
+type PresenceState = { user?: unknown; role?: Role }
 
 function identityColor(value: string) {
   const palette = ['#7c3aed', '#0f766e', '#c2410c', '#0369a1', '#be123c', '#4d7c0f', '#6d28d9']
   return palette[Math.abs([...value].reduce((acc, char) => acc + char.charCodeAt(0), 0)) % palette.length]
+}
+
+function normalizePresenceIdentity(value: unknown, clientId: number): ChatIdentity | null {
+  if (!value || typeof value !== 'object') return null
+  const source = value as Record<string, unknown>
+  const usernameSource = typeof source.username === 'string' ? source.username : typeof source.name === 'string' ? source.name : ''
+  const username = usernameSource.normalize('NFKC').trim().slice(0, 30)
+  if (!username) return null
+  const id = typeof source.id === 'string' && source.id.trim() ? source.id : `client:${clientId}`
+  const type = source.type === 'guest' ? 'guest' : 'user'
+  const color = typeof source.color === 'string' && /^#[0-9a-f]{6}$/i.test(source.color) ? source.color : identityColor(id)
+  return { id, type, username, color }
 }
 
 export function BoardPage() {
@@ -98,10 +110,13 @@ function BoardWorkspace({ access }: { access: BoardAccess }) {
     const updateParticipants = () => {
       const states = awareness.getStates() as Map<number, PresenceState>
       const unique = new Map<string, ChatIdentity>()
-      for (const state of states.values()) if (state.user) unique.set(state.user.id, state.user)
+      for (const [clientId, state] of states) {
+        const participant = normalizePresenceIdentity(state.user, clientId)
+        if (participant) unique.set(participant.id, participant)
+      }
       setParticipants([...unique.values()])
-      const mine = states.get(doc.clientID)?.user
-      if (mine) setSelfIdentity(mine)
+      const mine = normalizePresenceIdentity(states.get(doc.clientID)?.user, doc.clientID)
+      if (mine && !mine.id.startsWith('client:')) setSelfIdentity(mine)
     }
     awareness.on('change', updateParticipants)
     updateParticipants()
@@ -160,7 +175,7 @@ function BoardWorkspace({ access }: { access: BoardAccess }) {
     <section className="board-stage"><BoardCanvas boardId={boardId} doc={doc} provider={provider} role={access.role} /></section>
     <nav className="right-actions" aria-label="Panneaux du projet"><button className={`panel-launcher ${activePanel === 'markdown' ? 'active' : ''} ${documentChanged ? 'has-update' : ''}`} onClick={() => setActivePanel(current => current === 'markdown' ? null : 'markdown')} title="Notes de projet"><FileText />{documentChanged && <span className="update-dot" />}</button><button className={`panel-launcher ${activePanel === 'chat' ? 'active' : ''} ${unreadMentions ? 'mention-alert' : unread ? 'has-update' : ''}`} onClick={openChat} title="Discussion"><MessageCircle />{unread > 0 && <span className="notification-badge">{unread > 99 ? '99+' : unread}</span>}{unreadMentions > 0 && <span className="mention-badge">@</span>}</button></nav>
     {activePanel === 'chat' && <ChatPanel provider={provider} messages={messages} identity={selfIdentity} currentUsername={access.user?.username} mentionableUsers={mentionableUsers} onClose={() => setActivePanel(null)} />}
-    {activePanel === 'markdown' && <MarkdownPanel provider={provider} role={access.role} status={status} identity={selfIdentity} onClose={() => setActivePanel(null)} />}
+    {activePanel === 'markdown' && <MarkdownPanel provider={provider} role={access.role} status={status} onClose={() => setActivePanel(null)} />}
     {showParticipants && <div className="participants-popover"><header><strong>Participants en ligne</strong><button className="icon-button" onClick={() => setShowParticipants(false)}><X size={16} /></button></header>{participants.map(person => <div key={person.id}><span className="presence-dot" style={{ background: person.color }} /><strong>{person.username}</strong>{person.type === 'guest' && <small>invité</small>}</div>)}</div>}
     {showShare && <ShareModal boardId={boardId} onClose={() => setShowShare(false)} />}
     {askPseudonym && <PseudonymModal initialValue={guestName} onCancel={() => setAskPseudonym(false)} onSubmit={value => { sessionStorage.setItem(guestNameKey, value); setGuestName(value); setAskPseudonym(false); setActivePanel('chat') }} />}
