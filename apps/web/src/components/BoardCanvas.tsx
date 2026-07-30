@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from 'react'
 import Konva from 'konva'
 import { Arrow, Ellipse, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Text as KonvaText, Transformer } from 'react-konva'
 import {
@@ -25,6 +25,8 @@ type Tool = 'select' | 'hand' | 'sticky' | 'rect' | 'ellipse' | 'text' | 'draw' 
 type PresenceUser = { id?: string; username?: string; name?: string; color?: string }
 type Presence = { user?: PresenceUser; canvasCursor?: { x: number; y: number } | null; selectedIds?: string[] }
 type Point = { x: number; y: number }
+type RemoteMove = { id: string; from: Point; to: Point }
+type RemoteMoveBatch = { sequence: number; moves: RemoteMove[] }
 type SelectionBox = { start: Point; end: Point } | null
 type PdfDialogState = { file: File; resolve: (options: PdfImportOptions | null) => void }
 type DraftStroke = { id: string; type: 'draw' | 'highlighter' | 'arrow'; x: number; y: number; points: number[]; stroke: string; strokeWidth: number; opacity: number }
@@ -54,10 +56,13 @@ function presenceColor(user: PresenceUser | undefined): string {
 function useYElements(doc: Y.Doc) {
   const map = useMemo(() => doc.getMap<unknown>('elements'), [doc])
   const cacheRef = useRef(new Map<string, { source: unknown; element: BoardElement }>())
+  const moveSequenceRef = useRef(0)
   const [elements, setElements] = useState<BoardElement[]>([])
+  const [remoteMoveBatch, setRemoteMoveBatch] = useState<RemoteMoveBatch>({ sequence: 0, moves: [] })
   useEffect(() => {
-    const update = () => {
+    const update = (transaction?: Y.Transaction) => {
       const next: BoardElement[] = []
+      const remoteMoves: RemoteMove[] = []
       const activeIds = new Set<string>()
       let index = 0
       for (const [id, value] of map.entries()) {
@@ -66,6 +71,9 @@ function useYElements(doc: Y.Doc) {
         let migrated = cached && cached.source === value ? cached.element : migrateElement(value, index)
         index++
         if (!migrated) continue
+        if (transaction && !transaction.local && cached && (cached.element.x !== migrated.x || cached.element.y !== migrated.y)) {
+          remoteMoves.push({ id, from: { x: cached.element.x, y: cached.element.y }, to: { x: migrated.x, y: migrated.y } })
+        }
         if (!cached || cached.source !== value) cacheRef.current.set(id, { source: value, element: migrated })
         next.push(migrated)
         const source = value as Record<string, unknown>
@@ -77,24 +85,135 @@ function useYElements(doc: Y.Doc) {
       }
       for (const id of cacheRef.current.keys()) if (!activeIds.has(id)) cacheRef.current.delete(id)
       setElements(next.sort((a, b) => a.zIndex - b.zIndex))
+      if (remoteMoves.length) setRemoteMoveBatch({ sequence: ++moveSequenceRef.current, moves: remoteMoves })
     }
-    map.observeDeep(update); update()
-    return () => map.unobserveDeep(update)
+    const observer = (_events: unknown[], transaction: Y.Transaction) => update(transaction)
+    map.observeDeep(observer); update()
+    return () => map.unobserveDeep(observer)
   }, [map])
-  return { map, elements }
+  return { map, elements, remoteMoveBatch }
 }
 function usePresence(provider: HocuspocusProvider) {
   const [states, setStates] = useState<Map<number, Presence>>(new Map())
   useEffect(() => {
     const awareness = provider.awareness
     if (!awareness) { setStates(new Map()); return }
-    const update = () => setStates(new Map(awareness.getStates() as Map<number, Presence>))
+    const update = (changes?: { added: number[]; updated: number[]; removed: number[] }) => {
+      const changedClients = changes ? [...changes.added, ...changes.updated, ...changes.removed] : []
+      if (changedClients.length && changedClients.every(clientId => clientId === awareness.clientID)) return
+      const next = new Map(awareness.getStates() as Map<number, Presence>)
+      next.delete(awareness.clientID)
+      setStates(next)
+    }
     awareness.on('change', update); update()
     return () => { awareness.off('change', update) }
   }, [provider])
   return states
 }
 function snap(value: number, enabled: boolean) { return enabled ? Math.round(value / GRID) * GRID : value }
+
+function useRemoteElementPositions(batch: RemoteMoveBatch) {
+  const transitionsRef = useRef(new Map<string, { from: Point; to: Point; startedAt: number; duration: number }>())
+  const positionsRef = useRef(new Map<string, Point>())
+  const frameRef = useRef<number | null>(null)
+  const [positions, setPositions] = useState<Map<string, Point>>(new Map())
+
+  useLayoutEffect(() => {
+    if (!batch.moves.length) return
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const now = performance.now()
+    for (const move of batch.moves) {
+      if (reducedMotion) {
+        transitionsRef.current.delete(move.id)
+        positionsRef.current.delete(move.id)
+        continue
+      }
+      const from = positionsRef.current.get(move.id) ?? move.from
+      const distance = Math.hypot(move.to.x - from.x, move.to.y - from.y)
+      if (distance < 0.5) continue
+      const duration = Math.min(320, Math.max(150, 135 + Math.sqrt(distance) * 8))
+      positionsRef.current.set(move.id, from)
+      transitionsRef.current.set(move.id, { from, to: move.to, startedAt: now, duration })
+    }
+    setPositions(new Map(positionsRef.current))
+
+    if (frameRef.current !== null || transitionsRef.current.size === 0) return
+    const animate = (time: number) => {
+      for (const [id, transition] of transitionsRef.current) {
+        const progress = Math.min(1, Math.max(0, (time - transition.startedAt) / transition.duration))
+        const eased = 1 - (1 - progress) ** 3
+        positionsRef.current.set(id, {
+          x: transition.from.x + (transition.to.x - transition.from.x) * eased,
+          y: transition.from.y + (transition.to.y - transition.from.y) * eased,
+        })
+        if (progress >= 1) {
+          transitionsRef.current.delete(id)
+          positionsRef.current.delete(id)
+        }
+      }
+      setPositions(new Map(positionsRef.current))
+      frameRef.current = transitionsRef.current.size ? window.requestAnimationFrame(animate) : null
+    }
+    frameRef.current = window.requestAnimationFrame(animate)
+  }, [batch])
+
+  useEffect(() => () => {
+    if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current)
+  }, [])
+
+  return positions
+}
+
+function SmoothRemoteCursor({ target, username, color }: { target: Point; username: string; color: string }) {
+  const groupRef = useRef<Konva.Group>(null)
+  const displayedRef = useRef<Point>({ ...target })
+  const targetRef = useRef<Point>({ ...target })
+  const frameRef = useRef<number | null>(null)
+  const lastFrameRef = useRef(0)
+  const initialRef = useRef<Point>({ ...target })
+
+  useEffect(() => {
+    targetRef.current = target
+    const current = displayedRef.current
+    if (Math.hypot(target.x - current.x, target.y - current.y) > 2500) {
+      displayedRef.current = { ...target }
+      groupRef.current?.position(target)
+      groupRef.current?.getLayer()?.batchDraw()
+      return
+    }
+    if (frameRef.current !== null) return
+    lastFrameRef.current = performance.now()
+    const animate = (time: number) => {
+      const node = groupRef.current
+      if (!node) { frameRef.current = null; return }
+      const elapsed = Math.min(50, Math.max(1, time - lastFrameRef.current))
+      lastFrameRef.current = time
+      const destination = targetRef.current
+      const currentPosition = displayedRef.current
+      const factor = 1 - Math.exp(-elapsed / 55)
+      const next = {
+        x: currentPosition.x + (destination.x - currentPosition.x) * factor,
+        y: currentPosition.y + (destination.y - currentPosition.y) * factor,
+      }
+      const remaining = Math.hypot(destination.x - next.x, destination.y - next.y)
+      displayedRef.current = remaining < 0.15 ? { ...destination } : next
+      node.position(displayedRef.current)
+      node.getLayer()?.batchDraw()
+      frameRef.current = remaining < 0.15 ? null : window.requestAnimationFrame(animate)
+    }
+    frameRef.current = window.requestAnimationFrame(animate)
+  }, [target.x, target.y])
+
+  useEffect(() => () => {
+    if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current)
+  }, [])
+
+  return <Group ref={groupRef} x={initialRef.current.x} y={initialRef.current.y} listening={false}>
+    <Line points={[0, 0, 0, 20, 5, 15, 10, 26, 14, 24, 9, 13, 17, 13]} closed fill={color} stroke="white" strokeWidth={1.5} perfectDrawEnabled={false} />
+    <Rect x={14} y={18} height={24} width={Math.max(58, username.length * 8 + 18)} fill={color} cornerRadius={7} perfectDrawEnabled={false} />
+    <KonvaText x={23} y={24} text={username} fontSize={12} fill="white" perfectDrawEnabled={false} />
+  </Group>
+}
 
 export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string; doc: Y.Doc; provider: HocuspocusProvider; role: Role }) {
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -104,9 +223,11 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
   const draftNodeRef = useRef<Konva.Line | Konva.Arrow>(null)
   const elementActionsRef = useRef<ElementActions | null>(null)
   const nodeRefs = useRef<Record<string, Konva.Node | null>>({})
-  const dragOrigin = useRef<{ pointerId: string; positions: Map<string, Point> } | null>(null)
+  const dragOrigin = useRef<{ pointerId: string; positions: Map<string, Point>; overlayIds: Set<string> } | null>(null)
   const draftRef = useRef<DraftStroke | null>(null)
-  const cursorThrottleRef = useRef({ lastSent: 0, pending: null as Point | null })
+  const cursorThrottleRef = useRef({ lastSent: 0, pending: null as Point | null, timer: null as number | null, published: null as Point | null })
+  const localDragPendingRef = useRef<Map<string, Point> | null>(null)
+  const localDragFrameRef = useRef<number | null>(null)
   const importAbortRef = useRef<AbortController | null>(null)
   const lastTouchDistance = useRef(0)
   const lastTouchCenter = useRef<Point | null>(null)
@@ -116,6 +237,7 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
   const [viewport, setViewport] = useState({ x: 0, y: 0, scale: 1 })
   const [draft, setDraft] = useState<DraftStroke | null>(null)
   const [selectionBox, setSelectionBox] = useState<SelectionBox>(null)
+  const [localDragPositions, setLocalDragPositions] = useState<Map<string, Point>>(new Map())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [snapEnabled, setSnapEnabled] = useState(true)
   const [busy, setBusy] = useState('')
@@ -124,7 +246,8 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
   const [pen, setPen] = useState({ size: 5, color: '#ec4899', opacity: 1 })
   const [highlighter, setHighlighter] = useState({ size: 22, color: '#fde047', opacity: 0.25 })
   const [textStyle, setTextStyle] = useState({ fontFamily: 'Inter, system-ui, sans-serif', fontSize: 24, color: '#172033', backgroundEnabled: false, background: '#ffffff' })
-  const { map, elements } = useYElements(doc)
+  const { map, elements, remoteMoveBatch } = useYElements(doc)
+  const remoteElementPositions = useRemoteElementPositions(remoteMoveBatch)
   const presence = usePresence(provider)
   const undoManager = useMemo(() => new Y.UndoManager(map, { captureTimeout: 350 }), [map])
   const canEdit = role !== 'viewer'
@@ -140,9 +263,10 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
   const visibleIds = useMemo(() => {
     const ids = spatialIndex.search(viewportBounds)
     selectedIds.forEach(id => ids.add(id))
+    remoteElementPositions.forEach((_point, id) => ids.add(id))
     if (editingId) ids.add(editingId)
     return ids
-  }, [editingId, selectedIds, spatialIndex, viewportBounds])
+  }, [editingId, remoteElementPositions, selectedIds, spatialIndex, viewportBounds])
   const visibleElements = useMemo(() => elements.filter(element => visibleIds.has(element.id)), [elements, visibleIds])
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds])
   const staticElements = useMemo(() => visibleElements.filter(element => !selectedSet.has(element.id)), [selectedSet, visibleElements])
@@ -157,6 +281,12 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
     })
     observer.observe(wrapperRef.current)
     return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => () => {
+    const cursorThrottle = cursorThrottleRef.current
+    if (cursorThrottle.timer !== null) window.clearTimeout(cursorThrottle.timer)
+    if (localDragFrameRef.current !== null) window.cancelAnimationFrame(localDragFrameRef.current)
   }, [])
 
   useEffect(() => {
@@ -240,15 +370,57 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
     else setSelectedIds(groupIds)
   }
 
-  function scheduleCursor(point: Point | null) {
-    if (!point) { provider.awareness?.setLocalStateField('canvasCursor', null); return }
-    const now = performance.now()
-    const minimumDelay = 1000 / performanceProfile.remoteCursorHz
+  function publishCursor(point: Point | null) {
+    const awareness = provider.awareness
+    if (!awareness) return
     const throttle = cursorThrottleRef.current
+    if (point && throttle.published && Math.hypot(point.x - throttle.published.x, point.y - throttle.published.y) < 0.2) return
+    throttle.lastSent = performance.now()
+    throttle.published = point ? { ...point } : null
+    awareness.setLocalStateField('canvasCursor', point)
+  }
+  function flushPendingCursor() {
+    const throttle = cursorThrottleRef.current
+    throttle.timer = null
+    const pending = throttle.pending
+    throttle.pending = null
+    if (pending) publishCursor(pending)
+  }
+  function scheduleCursor(point: Point | null) {
+    const throttle = cursorThrottleRef.current
+    if (!point) {
+      if (throttle.timer !== null) window.clearTimeout(throttle.timer)
+      throttle.timer = null
+      throttle.pending = null
+      if (throttle.published) publishCursor(null)
+      return
+    }
     throttle.pending = point
-    if (now - throttle.lastSent < minimumDelay) return
-    throttle.lastSent = now
-    provider.awareness?.setLocalStateField('canvasCursor', point)
+    const minimumDelay = 1000 / performanceProfile.remoteCursorHz
+    const remaining = minimumDelay - (performance.now() - throttle.lastSent)
+    if (remaining <= 0) {
+      if (throttle.timer !== null) window.clearTimeout(throttle.timer)
+      throttle.timer = null
+      flushPendingCursor()
+    } else if (throttle.timer === null) {
+      throttle.timer = window.setTimeout(flushPendingCursor, remaining)
+    }
+  }
+  function queueLocalDragPositions(next: Map<string, Point>) {
+    localDragPendingRef.current = next
+    if (localDragFrameRef.current !== null) return
+    localDragFrameRef.current = window.requestAnimationFrame(() => {
+      localDragFrameRef.current = null
+      const pending = localDragPendingRef.current
+      localDragPendingRef.current = null
+      if (pending) setLocalDragPositions(new Map(pending))
+    })
+  }
+  function clearLocalDragPositions() {
+    if (localDragFrameRef.current !== null) window.cancelAnimationFrame(localDragFrameRef.current)
+    localDragFrameRef.current = null
+    localDragPendingRef.current = null
+    setLocalDragPositions(new Map())
   }
 
   function beginDraft(type: 'draw' | 'highlighter' | 'arrow', point: Point) {
@@ -350,20 +522,30 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
   function startDrag(element: BoardElement, event: Konva.KonvaEventObject<DragEvent>) {
     if (!selectedIds.includes(element.id)) setSelectedIds(element.groupId ? elements.filter(item => item.groupId === element.groupId).map(item => item.id) : [element.id])
     const active = selectedIds.includes(element.id) ? selectedIds : (element.groupId ? elements.filter(item => item.groupId === element.groupId).map(item => item.id) : [element.id])
-    dragOrigin.current = { pointerId: element.id, positions: new Map(active.map(id => [id, { x: nodeRefs.current[id]?.x() ?? 0, y: nodeRefs.current[id]?.y() ?? 0 }])) }
+    const positions = new Map(active.map(id => [id, { x: nodeRefs.current[id]?.x() ?? 0, y: nodeRefs.current[id]?.y() ?? 0 }]))
+    const overlayIds = new Set(elements.filter(item => active.includes(item.id) && (item.type === 'text' || item.type === 'sticky')).map(item => item.id))
+    dragOrigin.current = { pointerId: element.id, positions, overlayIds }
+    setLocalDragPositions(new Map([...positions].filter(([id]) => overlayIds.has(id))))
     event.target.getStage()!.container().style.cursor = 'grabbing'
   }
   function moveDrag(element: BoardElement, event: Konva.KonvaEventObject<DragEvent>) {
     const origin = dragOrigin.current; if (!origin || origin.pointerId !== element.id) return
     const start = origin.positions.get(element.id); if (!start) return
     const dx = event.target.x() - start.x, dy = event.target.y() - start.y
-    for (const [id, point] of origin.positions) if (id !== element.id) nodeRefs.current[id]?.position({ x: point.x + dx, y: point.y + dy })
+    const nextOverlayPositions = new Map<string, Point>()
+    for (const [id, point] of origin.positions) {
+      const next = { x: point.x + dx, y: point.y + dy }
+      if (origin.overlayIds.has(id)) nextOverlayPositions.set(id, next)
+      if (id !== element.id) nodeRefs.current[id]?.position(next)
+    }
+    if (nextOverlayPositions.size) queueLocalDragPositions(nextOverlayPositions)
     event.target.getLayer()?.batchDraw()
   }
   function endDrag(event: Konva.KonvaEventObject<DragEvent>) {
     const origin = dragOrigin.current; dragOrigin.current = null
     if (!origin) return
     doc.transact(() => { for (const id of origin.positions.keys()) { const node = nodeRefs.current[id], current = migrateElement(map.get(id)); if (node && current) map.set(id, { ...current, x: snap(node.x(), snapEnabled), y: snap(node.y(), snapEnabled) }) } })
+    clearLocalDragPositions()
     event.target.getStage()!.container().style.cursor = 'move'
   }
 
@@ -491,7 +673,7 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
     for (let y = startY; y <= worldBottom + GRID; y += GRID) lines.push({ key: `y${y}`, points: [worldLeft - GRID, y, worldRight + GRID, y] })
     return lines
   }, [worldBottom, worldLeft, worldRight, worldTop])
-  const remotePresences = [...presence.entries()].filter(([clientId, state]) => clientId !== doc.clientID && state.user && state.canvasCursor)
+  const remotePresences = [...presence.entries()].filter(([, state]) => state.user && state.canvasCursor)
   const selectionRect = selectionBox ? { x: Math.min(selectionBox.start.x, selectionBox.end.x), y: Math.min(selectionBox.start.y, selectionBox.end.y), width: Math.abs(selectionBox.end.x - selectionBox.start.x), height: Math.abs(selectionBox.end.y - selectionBox.start.y) } : null
   const editing = editingId ? elements.find(element => element.id === editingId) : null
 
@@ -563,9 +745,9 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
         />
       </Layer>
       <Layer listening={false}>{gridLines.map(line => <Line key={line.key} points={line.points} stroke="#cbd5e1" strokeWidth={0.55 / viewport.scale} opacity={0.75} perfectDrawEnabled={false} />)}</Layer>
-      <Layer>{staticElements.map(element => <BoardElementNode key={element.id} element={element} boardId={boardId} canEdit={canEdit} tool={tool} perfectDraw={performanceProfile.perfectDraw} shadows={performanceProfile.shadows} actionsRef={elementActionsRef} />)}</Layer>
+      <Layer>{staticElements.map(element => <BoardElementNode key={element.id} element={remoteElementPositions.has(element.id) ? { ...element, ...remoteElementPositions.get(element.id)! } : element} boardId={boardId} canEdit={canEdit} tool={tool} perfectDraw={performanceProfile.perfectDraw} shadows={performanceProfile.shadows} actionsRef={elementActionsRef} />)}</Layer>
       <Layer>
-        {interactionElements.map(element => <BoardElementNode key={element.id} element={element} boardId={boardId} canEdit={canEdit} tool={tool} perfectDraw={performanceProfile.perfectDraw} shadows={performanceProfile.shadows} actionsRef={elementActionsRef} />)}
+        {interactionElements.map(element => <BoardElementNode key={element.id} element={remoteElementPositions.has(element.id) ? { ...element, ...remoteElementPositions.get(element.id)! } : element} boardId={boardId} canEdit={canEdit} tool={tool} perfectDraw={performanceProfile.perfectDraw} shadows={performanceProfile.shadows} actionsRef={elementActionsRef} />)}
         {draft && (draft.type === 'arrow'
           ? <Arrow ref={(node: Konva.Arrow | null) => { draftNodeRef.current = node }} x={draft.x} y={draft.y} points={draft.points} stroke={draft.stroke} fill={draft.stroke} strokeWidth={draft.strokeWidth} opacity={draft.opacity} pointerLength={12} pointerWidth={12} lineCap="round" lineJoin="round" listening={false} perfectDrawEnabled={false} />
           : <Line ref={(node: Konva.Line | null) => { draftNodeRef.current = node }} x={draft.x} y={draft.y} points={draft.points} stroke={draft.stroke} strokeWidth={draft.strokeWidth} opacity={draft.opacity} tension={draft.type === 'draw' ? 0.35 : 0} lineCap={draft.type === 'draw' ? 'round' : 'square'} lineJoin={draft.type === 'draw' ? 'round' : 'bevel'} globalCompositeOperation={draft.type === 'highlighter' ? 'multiply' : 'source-over'} listening={false} perfectDrawEnabled={false} />)}
@@ -582,17 +764,20 @@ export function BoardCanvas({ boardId, doc, provider, role }: { boardId: string;
         }} />}
       </Layer>
       <Layer listening={false}>
-        {remotePresences.map(([clientId, state]) => {
-          const username = presenceUsername(state.user)
-          const color = presenceColor(state.user)
-          return <Group key={clientId} x={state.canvasCursor!.x} y={state.canvasCursor!.y} listening={false}><Line points={[0, 0, 0, 20, 5, 15, 10, 26, 14, 24, 9, 13, 17, 13]} closed fill={color} stroke="white" strokeWidth={1.5} perfectDrawEnabled={false} /><Rect x={14} y={18} height={24} width={Math.max(58, username.length * 8 + 18)} fill={color} cornerRadius={7} perfectDrawEnabled={false} /><KonvaText x={23} y={24} text={username} fontSize={12} fill="white" perfectDrawEnabled={false} /></Group>
-        })}
+        {remotePresences.map(([clientId, state]) => <SmoothRemoteCursor
+          key={clientId}
+          target={state.canvasCursor!}
+          username={presenceUsername(state.user)}
+          color={presenceColor(state.user)}
+        />)}
       </Layer>
     </Stage>
 
     <div className="canvas-rich-overlays" aria-live="polite">
       {visibleElements.filter(element => (element.type === 'text' || element.type === 'sticky') && element.richTextField).map(element => {
-        const style = overlayStyle(element, viewport)
+        const position = localDragPositions.get(element.id) ?? remoteElementPositions.get(element.id)
+        const displayedElement = position ? { ...element, ...position } : element
+        const style = overlayStyle(displayedElement, viewport)
         return editingId === element.id ? <CanvasTextEditor key={element.id} doc={doc} field={element.richTextField!} initialText={element.legacyText} style={style} onClose={() => setEditingId(null)} /> : <div key={element.id} className={`canvas-rich-text ${element.type}`} style={{ ...style, pointerEvents: 'none', fontFamily: element.fontFamily, fontSize: element.fontSize ? element.fontSize * viewport.scale : undefined, color: element.textColor }}><RichTextContent doc={doc} field={element.richTextField!} fallbackText={element.legacyText} /></div>
       })}
     </div>

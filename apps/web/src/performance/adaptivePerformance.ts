@@ -30,7 +30,7 @@ export function useAdaptivePerformance(totalElements: number, visibleElements: n
       pixelRatio: economy ? 1 : Math.min(window.devicePixelRatio || 1, balanced ? 1.5 : 2),
       shadows: mode === 'quality',
       perfectDraw: mode === 'quality',
-      remoteCursorHz: economy ? 12 : balanced ? 20 : 30,
+      remoteCursorHz: economy ? 20 : balanced ? 30 : 40,
     }
   }, [longTaskPressure, totalElements, visibleElements])
 }

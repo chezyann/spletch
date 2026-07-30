@@ -12,7 +12,7 @@ export function useCollaboration(options: { boardId: string; guestName: string }
     url: WS_URL,
     name: `board.${options.boardId}`,
     document: doc,
-    flushDelay: 120,
+    flushDelay: 25,
     forceSyncInterval: 10_000,
     token: async () => (await api<{ ticket: string }>(`/api/boards/${options.boardId}/realtime-ticket`, {
       method: 'POST', body: JSON.stringify({ guestName: options.guestName || undefined }),
